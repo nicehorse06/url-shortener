@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  fastapi-demo:
+    build:
+      context: ./app
+    container_name: fastapi-demo
+    ports:
+      - "8000:8000"
+    networks:
+      - app-network
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - fastapi-demo
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

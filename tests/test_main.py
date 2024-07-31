@@ -1,5 +1,11 @@
+import sys
+import os
+
+# 將專案根目錄加入系統路徑
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from fastapi.testclient import TestClient
-from main import app, calculate_square
+from app.main import app, calculate_square
 
 client = TestClient(app)
 
