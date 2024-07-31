@@ -7,6 +7,7 @@ services:
     container_name: fastapi-demo
     ports:
       - "8000:8000"
+    restart: always
     networks:
       - app-network
 
@@ -19,6 +20,7 @@ services:
       - "80:80"
     depends_on:
       - fastapi-demo
+    restart: always
     networks:
       - app-network
 
