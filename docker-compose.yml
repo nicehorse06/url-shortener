@@ -1,12 +1,38 @@
 version: '3.8'
 
 services:
-  fastapi-demo:
+  url-shortener:
     build:
       context: ./app
-    container_name: fastapi-demo
+    container_name: url-shortener
     ports:
       - "8000:8000"
+    restart: always
+    networks:
+      - app-network
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres/dbname
+      - REDIS_URL=redis://redis:6379
+
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    restart: always
+    networks:
+      - app-network
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dbname
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: redis
     restart: always
     networks:
       - app-network
@@ -19,7 +45,7 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - fastapi-demo
+      - url-shortener
     restart: always
     networks:
       - app-network
@@ -27,3 +53,6 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  postgres_data:
