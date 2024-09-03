@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from pydantic import BaseModel, AnyUrl, ValidationError
+from pydantic import BaseModel, AnyUrl, field_validator
 from sqlalchemy import create_engine, Column, String, Integer, DateTime
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from datetime import datetime, timedelta, timezone
@@ -76,9 +76,16 @@ class URLRequest(BaseModel):
 
 class URLResponse(BaseModel):
     short_url: str  # 返回生成的短網址
-    expiration_date: datetime  # 返回短網址的過期時間
+    expiration_date: str  # 修改為只顯示日期的字符串
     success: bool  # 操作是否成功
     reason: str = None  # 如果失敗，返回失敗原因
+
+    @field_validator('expiration_date', mode='before')
+    def format_expiration_date(cls, v):
+        # 如果 v 是 datetime 對象，則只取日期部分
+        if isinstance(v, datetime):
+            return v.date().isoformat()
+        return v
 
 # 依賴注入：每次請求時獲取數據庫 session
 def get_db():
@@ -145,8 +152,12 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
             }
         )
 
-    # 查詢該 URL 是否已存在
-    existing_url = db.query(URLMapping).filter(URLMapping.original_url == original_url_str).first()
+    # 查詢該 URL 是否已存在且未過期
+    existing_url = db.query(URLMapping).filter(
+        URLMapping.original_url == original_url_str,
+        URLMapping.expiration_date > datetime.now(timezone.utc)  # 檢查是否未過期
+    ).first()
+
     if existing_url:
         full_short_url = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/urls/{url_version}/go/{existing_url.short_url}"
         return URLResponse(
@@ -184,6 +195,7 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
     )
 
 
+
 # 使用短網址進行重定向的 API
 @app.get(f"/urls/{url_version}/go/{{short_url}}")
 @rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
@@ -191,19 +203,43 @@ async def redirect_to_original(request: Request, short_url: str, db: Session = D
     original_url = redis_client.get(short_url)
 
     if not original_url:
+        # 查詢數據庫中的短網址記錄
         url_mapping = db.query(URLMapping).filter(URLMapping.short_url == short_url).first()
+        
         if url_mapping:
+            # 檢查是否已過期
+            if url_mapping.expiration_date < datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=410,  # 410 Gone 表示資源已經過期
+                    detail={
+                        "reason": "Short URL expired",
+                        "details": f"The short URL '{short_url}' has expired and is no longer accessible.",
+                        "success": False
+                    }
+                )
+            
+            # 如果未過期，將原始 URL 存入 Redis 並設置過期時間
             original_url = url_mapping.original_url
-            # 確保 expiration_date 是一個具有 UTC 時區的 datetime 對象
             expiration_date_aware = url_mapping.expiration_date.replace(tzinfo=timezone.utc)
-            ex = int((expiration_date_aware - datetime.now(timezone.utc)).total_seconds())
-            redis_client.set(short_url, original_url, ex=ex)
+
+            # 計算距離 expiration_date 的剩餘秒數
+            seconds_until_expiration = int((expiration_date_aware - datetime.now(timezone.utc)).total_seconds())
+
+            # 24小時後的秒數
+            one_day_seconds = 24 * 60 * 60
+
+            # 設置 Redis 過期時間為兩者中較短的那一個
+            redis_expiration_time = min(seconds_until_expiration, one_day_seconds)
+
+            # 將短網址與原始URL存入 Redis 並設置過期時間
+            redis_client.set(short_url, original_url, ex=redis_expiration_time)
+
         else:
             raise HTTPException(
                 status_code=404,
                 detail={
                     "reason": "Short URL not found",
-                    "details": f"The short URL '{short_url}' does not exist or has expired. Please check the URL and try again.",
+                    "details": f"The short URL '{short_url}' does not exist. Please check the URL and try again.",
                     "success": False
                 }
             )
@@ -221,6 +257,7 @@ async def redirect_to_original(request: Request, short_url: str, db: Session = D
 
     # 返回一個 302 重定向到 original_url
     return RedirectResponse(url=original_url)
+
 
 if __name__ == "__main__":
     import uvicorn
