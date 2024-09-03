@@ -39,16 +39,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_details = exc.errors()
     for error in error_details:
         if error['loc'] == ('body', 'original_url'):
-            # 如果是 original_url 的錯誤，我們返回自定義的格式
+            # 返回更詳細的錯誤信息，說明為何 URL 格式無效
             return JSONResponse(
                 status_code=400,
-                content={"reason": "Invalid URL format", "success": False}
+                content={
+                    "reason": "Invalid URL format",
+                    "details": error['msg'],  # 包含更詳細的錯誤描述
+                    "input": error['input'],  # 返回用戶輸入的無效 URL
+                    "success": False
+                }
             )
     # 對於其他驗證錯誤，返回默認的錯誤訊息
     return JSONResponse(
         status_code=400,
-        content={"reason": "Validation error", "success": False}
+        content={
+            "reason": "Validation error",
+            "details": error_details,  # 返回所有驗證錯誤的詳細信息
+            "success": False
+        }
     )
+
 
 # 定義數據庫模型
 class URLMapping(Base):
@@ -105,7 +115,14 @@ def rate_limit(limit: int = 10, window: int = 60):
 
             # 如果超過限制，拋出異常
             if current > limit:
-                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "reason": "Rate limit exceeded",
+                        "details": f"You have exceeded the limit of {limit} requests per {window} seconds. Please wait before sending more requests.",
+                        "success": False
+                    }
+                )
 
             return await func(request, *args, **kwargs)
         return wrapper
@@ -121,13 +138,17 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
     if len(original_url_str) > 2048:
         return JSONResponse(
             status_code=400,
-            content={"reason": "URL is too long", "success": False}
+            content={
+                "reason": "URL is too long",
+                "details": f"The provided URL is {len(original_url_str)} characters long, but the maximum allowed length is 2048 characters.",
+                "success": False
+            }
         )
 
     # 查詢該 URL 是否已存在
     existing_url = db.query(URLMapping).filter(URLMapping.original_url == original_url_str).first()
     if existing_url:
-        full_short_url = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/{existing_url.short_url}"
+        full_short_url = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/urls/{url_version}/go/{existing_url.short_url}"
         return URLResponse(
             short_url=full_short_url,
             expiration_date=existing_url.expiration_date,
@@ -153,8 +174,8 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
     redis_client.set(short_url, original_url_str, ex=ex)
 
     # 根據當前運行環境生成完整的短網址
-    this_port = f':{request.url.port}' or request.url.port
-    full_short_url = f"{request.url.scheme}://{request.url.hostname}{this_port}/{short_url}"
+    this_port = f':{request.url.port}' if request.url.port else ''
+    full_short_url = f"{request.url.scheme}://{request.url.hostname}{this_port}/urls/{url_version}/go/{short_url}"
 
     return URLResponse(
         short_url=full_short_url,
@@ -162,8 +183,9 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
         success=True
     )
 
+
 # 使用短網址進行重定向的 API
-@app.get("/{short_url}")
+@app.get(f"/urls/{url_version}/go/{{short_url}}")
 @rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
 async def redirect_to_original(request: Request, short_url: str, db: Session = Depends(get_db)):
     original_url = redis_client.get(short_url)
@@ -177,7 +199,14 @@ async def redirect_to_original(request: Request, short_url: str, db: Session = D
             ex = int((expiration_date_aware - datetime.now(timezone.utc)).total_seconds())
             redis_client.set(short_url, original_url, ex=ex)
         else:
-            raise HTTPException(status_code=404, detail="Short URL not found")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "reason": "Short URL not found",
+                    "details": f"The short URL '{short_url}' does not exist or has expired. Please check the URL and try again.",
+                    "success": False
+                }
+            )
 
     # 生成當天的 Redis key，例如：usage:abc123:20240901
     today = datetime.now().strftime('%Y%m%d')
