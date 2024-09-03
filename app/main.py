@@ -1,7 +1,11 @@
 import redis
 import os
+
 from fastapi import FastAPI, HTTPException, Depends, Request
-from pydantic import BaseModel, AnyUrl
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from pydantic import BaseModel, AnyUrl, ValidationError
 from sqlalchemy import create_engine, Column, String, Integer, DateTime
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from datetime import datetime, timedelta, timezone
@@ -24,6 +28,24 @@ redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 # Base62 字符集，用於生成短網址
 BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# 自定義錯誤處理器
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # 尋找所有的錯誤訊息
+    error_details = exc.errors()
+    for error in error_details:
+        if error['loc'] == ('body', 'original_url'):
+            # 如果是 original_url 的錯誤，我們返回自定義的格式
+            return JSONResponse(
+                status_code=400,
+                content={"reason": "Invalid URL format", "success": False}
+            )
+    # 對於其他驗證錯誤，返回默認的錯誤訊息
+    return JSONResponse(
+        status_code=400,
+        content={"reason": "Validation error", "success": False}
+    )
 
 # 定義數據庫模型
 class URLMapping(Base):
@@ -86,12 +108,30 @@ def rate_limit(limit: int = 10, window: int = 60):
         return wrapper
     return decorator
 
-# 創建短網址的 API
+
 @app.post("/shorten", response_model=URLResponse)
 @rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
 async def create_short_url(request: Request, request_data: URLRequest, db: Session = Depends(get_db)):
-    original_url_str = str(request_data.original_url)  # 將 Pydantic 的 AnyUrl 轉換為字符串
+    original_url_str = str(request_data.original_url)  # Pydantic 的 AnyUrl 自動驗證 URL 格式
 
+    # URL 長度檢查
+    if len(original_url_str) > 2:
+        return JSONResponse(
+            status_code=400,
+            content={"reason": "URL is too long", "success": False}
+        )
+
+    # 查詢該 URL 是否已存在
+    existing_url = db.query(URLMapping).filter(URLMapping.original_url == original_url_str).first()
+    if existing_url:
+        # 如果已經存在該原始 URL，返回之前生成的短網址
+        return URLResponse(
+            short_url=existing_url.short_url,
+            expiration_date=existing_url.expiration_date,
+            success=True
+        )
+
+    # 如果 URL 格式正確且不存在重複，創建新的短網址映射
     url_mapping = URLMapping(
         original_url=original_url_str,
         expiration_date=datetime.now(timezone.utc) + timedelta(days=30)

@@ -9,6 +9,9 @@ __pycache__/
 # sqlite
 *.db
 
+# reids
+*.rdb
+
 # Distribution / packaging
 .Python
 build/
