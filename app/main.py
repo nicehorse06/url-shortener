@@ -1,13 +1,11 @@
-import redis, os
-
-from fastapi import FastAPI, HTTPException, Depends
+import redis
+import os
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel, AnyUrl
 from sqlalchemy import create_engine, Column, String, Integer, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from datetime import datetime, timedelta, timezone
-
-
+import functools
 
 # 初始化 FastAPI 應用
 app = FastAPI()
@@ -17,7 +15,6 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///./test.db')
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 
 # 配置 SQLAlchemy
-# 當使用 SQLite 時，需要額外的 connect_args 配置以允許多線程訪問
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -36,7 +33,6 @@ class URLMapping(Base):
     short_url = Column(String, unique=True, index=True)
     expiration_date = Column(DateTime, nullable=False)
 
-# 創建數據庫表
 Base.metadata.create_all(bind=engine)
 
 # 定義 Pydantic 模型，用於請求和響應數據結構
@@ -67,39 +63,51 @@ def encode_base62(num: int) -> str:
         base62.append(BASE62_ALPHABET[rem])
     return ''.join(reversed(base62))
 
+# 速率限制裝飾器
+def rate_limit(limit: int = 10, window: int = 60):
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            ip = request.client.host
+            key = f"rate_limit:{ip}"
+
+            # 增加請求計數
+            current = redis_client.incr(key)
+
+            # 如果是第一次設置，設置過期時間
+            if current == 1:
+                redis_client.expire(key, window)
+
+            # 如果超過限制，拋出異常
+            if current > limit:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+            return await func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
 # 創建短網址的 API
 @app.post("/shorten", response_model=URLResponse)
-async def create_short_url(request: URLRequest, db: Session = Depends(get_db)):
-    original_url_str = str(request.original_url)  # 將 Pydantic 的 AnyUrl 轉換為字符串
+@rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
+async def create_short_url(request: Request, request_data: URLRequest, db: Session = Depends(get_db)):
+    original_url_str = str(request_data.original_url)  # 將 Pydantic 的 AnyUrl 轉換為字符串
 
-    # 在資料庫中創建新的短網址映射，設置過期時間為 30 天後
     url_mapping = URLMapping(
         original_url=original_url_str,
         expiration_date=datetime.now(timezone.utc) + timedelta(days=30)
     )
-    db.add(url_mapping)  # 添加到數據庫
-    db.commit()  # 提交數據庫事務
-    db.refresh(url_mapping)  # 刷新實體以獲取自動生成的 ID
+    db.add(url_mapping)
+    db.commit()
+    db.refresh(url_mapping)
 
-    # 使用 ID 轉換為 Base62 生成短網址
     short_url = encode_base62(url_mapping.id)
-
-    # 更新資料庫中的短網址字段
     url_mapping.short_url = short_url
     db.commit()
 
-    # 將 expiration_date 轉換為 timezone-aware datetime
     expiration_date_aware = url_mapping.expiration_date.replace(tzinfo=timezone.utc)
-
-    # 計算短網址的有效期（秒數）
     ex = int((expiration_date_aware - datetime.now(timezone.utc)).total_seconds())
 
-    # 在 Redis 中儲存該短網址，設置過期時間
-    redis_client.set(
-        short_url,
-        original_url_str,
-        ex=ex
-    )
+    redis_client.set(short_url, original_url_str, ex=ex)
 
     return URLResponse(
         short_url=short_url,
@@ -107,25 +115,18 @@ async def create_short_url(request: URLRequest, db: Session = Depends(get_db)):
         success=True
     )
 
-
 # 使用短網址進行重定向的 API
 @app.get("/{short_url}")
-async def redirect_to_original(short_url: str, db: Session = Depends(get_db)):
-    # 先從 Redis 中查找短網址
+@rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
+async def redirect_to_original(request: Request, short_url: str, db: Session = Depends(get_db)):
     original_url = redis_client.get(short_url)
 
     if not original_url:
-        # 如果 Redis 中沒有找到，從資料庫中查找
         url_mapping = db.query(URLMapping).filter(URLMapping.short_url == short_url).first()
         if url_mapping:
             original_url = url_mapping.original_url
-            # 計算剩餘有效期（秒數），並更新 Redis 快取
-            ex = (url_mapping.expiration_date - datetime.now(timezone.utc)).total_seconds()
-            redis_client.set(
-                short_url,
-                original_url,
-                ex=ex
-            )
+            ex = int((url_mapping.expiration_date - datetime.now(timezone.utc)).total_seconds())
+            redis_client.set(short_url, original_url, ex=ex)
         else:
             raise HTTPException(status_code=404, detail="Short URL not found")
 
