@@ -3,7 +3,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from pydantic import BaseModel, AnyUrl, ValidationError
 from sqlalchemy import create_engine, Column, String, Integer, DateTime
@@ -28,6 +28,9 @@ redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 # Base62 字符集，用於生成短網址
 BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# url version
+url_version = 'v1'
 
 # 自定義錯誤處理器
 @app.exception_handler(RequestValidationError)
@@ -109,13 +112,13 @@ def rate_limit(limit: int = 10, window: int = 60):
     return decorator
 
 
-@app.post("/shorten", response_model=URLResponse)
+@app.post(f"/urls/{url_version}/shorten", response_model=URLResponse, status_code=201)
 @rate_limit(limit=10, window=60)  # 每分鐘最多10個請求
 async def create_short_url(request: Request, request_data: URLRequest, db: Session = Depends(get_db)):
     original_url_str = str(request_data.original_url)  # Pydantic 的 AnyUrl 自動驗證 URL 格式
 
     # URL 長度檢查
-    if len(original_url_str) > 2:
+    if len(original_url_str) > 2048:
         return JSONResponse(
             status_code=400,
             content={"reason": "URL is too long", "success": False}
@@ -124,9 +127,9 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
     # 查詢該 URL 是否已存在
     existing_url = db.query(URLMapping).filter(URLMapping.original_url == original_url_str).first()
     if existing_url:
-        # 如果已經存在該原始 URL，返回之前生成的短網址
+        full_short_url = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/{existing_url.short_url}"
         return URLResponse(
-            short_url=existing_url.short_url,
+            short_url=full_short_url,
             expiration_date=existing_url.expiration_date,
             success=True
         )
@@ -149,8 +152,12 @@ async def create_short_url(request: Request, request_data: URLRequest, db: Sessi
 
     redis_client.set(short_url, original_url_str, ex=ex)
 
+    # 根據當前運行環境生成完整的短網址
+    this_port = f':{request.url.port}' or request.url.port
+    full_short_url = f"{request.url.scheme}://{request.url.hostname}{this_port}/{short_url}"
+
     return URLResponse(
-        short_url=short_url,
+        short_url=full_short_url,
         expiration_date=url_mapping.expiration_date,
         success=True
     )
@@ -165,12 +172,26 @@ async def redirect_to_original(request: Request, short_url: str, db: Session = D
         url_mapping = db.query(URLMapping).filter(URLMapping.short_url == short_url).first()
         if url_mapping:
             original_url = url_mapping.original_url
-            ex = int((url_mapping.expiration_date - datetime.now(timezone.utc)).total_seconds())
+            # 確保 expiration_date 是一個具有 UTC 時區的 datetime 對象
+            expiration_date_aware = url_mapping.expiration_date.replace(tzinfo=timezone.utc)
+            ex = int((expiration_date_aware - datetime.now(timezone.utc)).total_seconds())
             redis_client.set(short_url, original_url, ex=ex)
         else:
             raise HTTPException(status_code=404, detail="Short URL not found")
 
-    return {"original_url": original_url}
+    # 生成當天的 Redis key，例如：usage:abc123:20240901
+    today = datetime.now().strftime('%Y%m%d')
+    usage_key = f"usage:{short_url}:{today}"
+
+    # 增加該短網址的當天使用次數
+    redis_client.incr(usage_key)
+
+    # 設置該 key 的過期時間為 24 小時（如果尚未設置過期時間）
+    if redis_client.ttl(usage_key) == -1:
+        redis_client.expire(usage_key, 86400)  # 86400 秒即 24 小時
+
+    # 返回一個 302 重定向到 original_url
+    return RedirectResponse(url=original_url)
 
 if __name__ == "__main__":
     import uvicorn
