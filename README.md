@@ -9,7 +9,7 @@ This is a URL Shortener application built using FastAPI, SQLAlchemy, Redis, and 
 - URL shortening: Converts long URLs into short URLs and stores them in the database.
 - Redirection: Redirects short URLs to the original long URLs.
 - URL expiration: Each short URL has a default expiration period of 30 days.
-- Caching: Redis is used to cache the URL mappings and reduce database lookups.
+- Caching: Redis is used to cache the URL mappings and reduce database lookups.h
 - Rate limiting: Ensures that clients cannot abuse the API by limiting requests per IP.
 - Environment-specific configurations: The app can run locally with SQLite or in Docker with PostgreSQL and Redis.
 - Automatic database initialization in Docker Compose.

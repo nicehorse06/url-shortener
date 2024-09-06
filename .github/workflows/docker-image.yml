@@ -1,0 +1,42 @@
+name: Build and Push Docker Image
+
+# Workflow will trigger on push or pull request to the main branch
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Check out the repository code
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Set up Docker Buildx
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+
+    # Log in to Docker Hub
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USER_NAME }}
+        password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+    # Build the Docker image
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }} .
+        docker tag ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }} ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:latest
+
+    # Push the Docker image to Docker Hub
+    - name: Push Docker image
+      run: |
+        docker push ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }}
+        docker push ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:latest
