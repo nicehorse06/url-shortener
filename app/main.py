@@ -13,10 +13,10 @@ app.include_router(short_url.router)
 # Bind custom validation exception handler
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
+# Initialize the database tables
+init_db()
 
 if __name__ == "__main__":
-    init_db()  # Initialize the database tables for dev
-
     import uvicorn
     # Start the FastAPI application
     uvicorn.run(app, host="0.0.0.0", port=8000)

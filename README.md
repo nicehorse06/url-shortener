@@ -22,19 +22,28 @@ This is a URL Shortener application built using FastAPI, SQLAlchemy, Redis, and 
    ```bash
    pip install -r requirements.txt
    ```
-3. Run the FastAPI app:
+3. Start the local Redis server
+4. Run the FastAPI app:
    ```bash
-   uvicorn app.main:app --reload
+   python main.py
    ```
-4. By default, the app will run on `http://localhost:8000`.
+5. By default, the app will run on `http://localhost:8000`.
 
 ### Docker Compose
 1. Ensure Docker and Docker Compose are installed and running.
-2. Run the application using Docker Compose:
+2. Build the application using Docker Compose
    ```bash
-   docker compose up --build
+   docker compose build
    ```
-3. The app will be accessible in development mode on http://localhost:8000, and for production, Nginx will expose the app on http://localhost:80 for external access.
+3. Run the application
+   ```bash
+   docker compose up
+   ```
+4. The app will be accessible in development mode on http://localhost:8000, and for production, Nginx will expose the app on http://localhost:80 for external access.
+5. Stop and remove containers, images, and volumes
+   ```bash
+   docker compose down --rmi all --volumes --remove-orphans
+   ```
 ## API Documentation
 
 You can access the API documentation in the following ways:
