@@ -1,18 +1,21 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from utils import validation_exception_handler
+from utils import validation_exception_handler, init_db
 from routers import short_url
 
-# 初始化 FastAPI 應用
+# Initialize FastAPI application
 app = FastAPI()
 
+# Include the short_url router
 app.include_router(short_url.router)
 
-# 綁定自定義的錯誤處理器
+# Bind custom validation exception handler
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 
 if __name__ == "__main__":
+    init_db()  # Initialize the database tables for dev
+
     import uvicorn
-    # 啟動 FastAPI 應用
+    # Start the FastAPI application
     uvicorn.run(app, host="0.0.0.0", port=8000)

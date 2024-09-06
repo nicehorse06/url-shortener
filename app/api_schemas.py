@@ -1,20 +1,32 @@
 from pydantic import BaseModel, AnyUrl, field_validator
 from datetime import datetime
 
-# 定義 Pydantic 模型，用於請求和響應數據結構
+
 class URLRequest(BaseModel):
-    original_url: AnyUrl  # 接收並驗證原始 URL
+    """Pydantic model for handling URL shortening request."""
+    original_url: AnyUrl  # Validates and accepts the original URL
+
 
 class URLResponse(BaseModel):
-    short_url: str  # 返回生成的短網址
-    expiration_date: str  # 修改為只顯示日期的字符串
-    success: bool  # 操作是否成功
-    reason: str = None  # 如果失敗，返回失敗原因
-    original_url: str
+    """Pydantic model for URL shortening response."""
+    short_url: str  # The generated short URL
+    expiration_date: str  # Display the expiration date as a string (date only)
+    success: bool  # Indicates whether the operation was successful
+    reason: str = None  # Reason for failure, if any
+    original_url: str  # The original URL
 
     @field_validator('expiration_date', mode='before')
-    def format_expiration_date(cls, v):
-        # 如果 v 是 datetime 對象，則只取日期部分
+    def format_expiration_date(cls, v: str | datetime) -> str:
+        """
+        Validator to format the expiration date.
+        If the value is a datetime object, it returns only the date part in ISO format.
+
+        Args:
+            v (str | datetime): The value to validate (either a string or datetime object).
+
+        Returns:
+            str: The formatted date string.
+        """
         if isinstance(v, datetime):
             return v.date().isoformat()
         return v
