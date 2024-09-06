@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime
-from config import engine, Base, ONE_DAY_SECONDS
+from config import Base, ONE_DAY_SECONDS
 from datetime import datetime, timezone
 from starlette.status import HTTP_410_GONE
 from utils import raise_http_error, Redis_cache_handler

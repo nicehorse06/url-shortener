@@ -1,5 +1,6 @@
-from pydantic import BaseModel, AnyUrl, field_validator
 from datetime import datetime
+
+from pydantic import BaseModel, AnyUrl, field_validator
 
 
 class URLRequest(BaseModel):

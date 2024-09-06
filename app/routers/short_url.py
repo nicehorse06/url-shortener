@@ -9,7 +9,8 @@ from starlette.status import (
 )
 from sqlalchemy.orm import Session
 from api_schemas import URLRequest, URLResponse
-from utils import encode_base62, rate_limit, get_db, raise_http_error, Redis_cache_handler
+from utils import encode_base62, rate_limit, raise_http_error, Redis_cache_handler
+from database import get_db
 from models import URLMapping
 from config import URL_VERSION, MAX_URL_LENGTH, URL_EXPIRATION_DATE
 

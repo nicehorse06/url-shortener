@@ -1,10 +1,10 @@
 import functools
 from fastapi import Request, HTTPException
-from config import redis_client, SessionLocal
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from models import Base
-from config import engine
+
+from redis_client import redis_client
+
 
 BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -66,26 +66,6 @@ def rate_limit(limit: int = 10, window: int = 60):
         return wrapper
     return decorator
 
-# Dependency injection: Retrieve a new database session per request
-def get_db():
-    """
-    Provides a new SQLAlchemy database session for each request.
-
-    Yields:
-        Session: A database session.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Initialize the database
-def init_db() -> None:
-    """
-    Initialize the database by creating all tables defined in the models.
-    """
-    Base.metadata.create_all(bind=engine)
 
 # Custom validation exception handler
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

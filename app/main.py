@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from utils import validation_exception_handler, init_db
+from utils import validation_exception_handler
+from database import init_db
 from routers import short_url
 
 # Initialize FastAPI application
