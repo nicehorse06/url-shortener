@@ -1,6 +1,5 @@
 name: Build and Push Docker Image
 
-# Workflow will trigger on push or pull request to the main branch
 on:
   push:
     branches:
@@ -29,10 +28,10 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USER_NAME }}
         password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
 
-    # Build the Docker image
+    # Build the Docker image in the "app" directory and specify Dockerfile path
     - name: Build Docker image
       run: |
-        docker build -t ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }} .
+        docker build -t ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }} -f ./app/Dockerfile ./app
         docker tag ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:${{ github.sha }} ${{ secrets.DOCKERHUB_USER_NAME }}/url-shortener:latest
 
     # Push the Docker image to Docker Hub
