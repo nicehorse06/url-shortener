@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from models import Base
 from config import DATABASE_URL
 
 # Database configuration: check for SQLite and configure engine accordingly

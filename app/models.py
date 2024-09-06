@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Integer, DateTime
-from config import Base, ONE_DAY_SECONDS
+from config import ONE_DAY_SECONDS, URL_VERSION
+from database import Base
 from datetime import datetime, timezone
 from starlette.status import HTTP_410_GONE
 from utils import raise_http_error, Redis_cache_handler
@@ -24,7 +25,6 @@ class URLMapping(Base):
         Returns:
             str: The complete short URL.
         """
-        from config import URL_VERSION
         this_port = f':{request.url.port}' if request.url.port else ''
         return f"{request.url.scheme}://{request.url.hostname}{this_port}/urls/{URL_VERSION}/go/{self.short_url}"
     
@@ -44,7 +44,7 @@ class URLMapping(Base):
             raise_http_error(
                 status_code=HTTP_410_GONE,
                 reason="Short URL expired",
-                details=f"The short URL '{self.short_url}' has expired and is no longer accessible."
+                details=f"The short URL pattern '{self.short_url}' has expired and is no longer accessible."
             )
 
     def set_shorten_original_url_cache(self, request: Request) -> dict:

@@ -126,7 +126,7 @@ async def redirect_to_original(
             raise_http_error(
                 status_code=HTTP_404_NOT_FOUND,
                 reason="Short URL not found",
-                details=f"The short URL '{short_url}' does not exist. Please check the URL and try again.",
+                details=f"The short URL pattern '{short_url}' does not exist. Please check the URL and try again.",
             )
 
     return RedirectResponse(url=original_url)

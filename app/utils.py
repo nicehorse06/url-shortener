@@ -3,6 +3,8 @@ from fastapi import Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from starlette.status import HTTP_400_BAD_REQUEST
+
 from redis_client import redis_client
 
 
@@ -85,7 +87,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         if error['loc'] == ('body', 'original_url'):
             # Custom response for original_url validation errors
             return JSONResponse(
-                status_code=400,
+                status_code=HTTP_400_BAD_REQUEST,
                 content={
                     "reason": "Invalid URL format",
                     "details": error['msg'],
@@ -95,7 +97,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             )
     # Default response for other validation errors
     return JSONResponse(
-        status_code=400,
+        status_code=HTTP_400_BAD_REQUEST,
         content={
             "reason": "Validation error",
             "details": error_details,
@@ -126,7 +128,7 @@ def raise_http_error(status_code: int, reason: str, details: str) -> None:
     )
 
 # Redis cache handler class
-class RedisCacheHandler:
+class Redis_cache_handler:
     """
     A class to interact with Redis for caching URL data.
     """

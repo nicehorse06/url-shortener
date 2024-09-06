@@ -4,41 +4,15 @@
 
 This is a URL Shortener application built using FastAPI, SQLAlchemy, Redis, and PostgreSQL/SQLite. The application provides API endpoints for generating short URLs and redirecting them to their original URLs. It leverages Redis for caching and rate limiting, and uses SQLAlchemy as the ORM for interacting with a relational database.
 
-## Features Implemented
+## Features
 
-- URL shortening: Converts long URLs into short URLs and stores them in the database.
-- Redirection: Redirects short URLs to the original long URLs.
-- URL expiration: Each short URL has a default expiration period of 30 days.
-- Caching: Redis is used to cache the URL mappings and reduce database lookups.h
-- Rate limiting: Ensures that clients cannot abuse the API by limiting requests per IP.
-- Environment-specific configurations: The app can run locally with SQLite or in Docker with PostgreSQL and Redis.
-- Automatic database initialization in Docker Compose.
-
-## Available APIs
-
-### 1. Shorten URL
-- **Endpoint**: `/urls/v1/shorten`
-- **Method**: `POST`
-- **Request Body**:
-  ```json
-  {
-    "original_url": "https://example.com"
-  }
-  ```
-- **Response**:
-  ```json
-  {
-    "short_url": "http://localhost:8000/urls/v1/go/abc123",
-    "expiration_date": "2024-12-31",
-    "success": true,
-    "original_url": "https://example.com"
-  }
-  ```
-
-### 2. Redirect URL
-- **Endpoint**: `/urls/v1/go/{short_url}`
-- **Method**: `GET`
-- **Response**: Redirects the user to the original URL.
+1. **URL Shortening**: Converts long URLs into shortened versions.
+2. **URL Redirection**: Redirects users from a shortened URL to the original URL.
+3. **Caching**: Caches URL mappings in Redis for faster retrieval.
+4. **Rate Limiting**: Limits the number of requests from a user within a specific time window.
+5. **Expiration**: URLs are assigned an expiration date (default of 30 days), after which they are no longer accessible.
+6. **Database**: Utilizes PostgreSQL or SQLite for storing URL mappings, with Redis as a cache layer.
+7. **Error Handling**: Robust error handling with custom messages and appropriate HTTP status codes.
 
 ## How to Start the Project
 
@@ -55,16 +29,106 @@ This is a URL Shortener application built using FastAPI, SQLAlchemy, Redis, and 
 4. By default, the app will run on `http://localhost:8000`.
 
 ### Docker Compose
-1. Ensure Docker is installed and running.
+1. Ensure Docker and Docker Compose are installed and running.
 2. Run the application using Docker Compose:
    ```bash
    docker compose up --build
    ```
-3. The app will be accessible on `http://localhost:8000` and automatically connect to PostgreSQL and Redis containers.
+3. The app will be accessible in development mode on http://localhost:8000, and for production, Nginx will expose the app on http://localhost:80 for external access.
+## API Documentation
 
-### Viewing FastAPI Swagger Documentation
-Once the app is running, you can view the automatically generated API documentation by navigating to:
+You can access the API documentation in the following ways:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
 
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+## Available APIs
 
+### 1. Shorten URL
+- **Endpoint**: `/urls/v1/shorten`
+- **Method**: `POST`
+- **Description**: Generates a short URL for a given original URL.
+- **Sample Request**:
+  ```json
+  {
+    "original_url": "https://example.com/some/long/path"
+  }
+  ```
+- **Sample Response (201 Created)**:
+  ```json
+  {
+    "short_url": "https://short.url/abc123",
+    "expiration_date": "2024-12-31",
+    "success": true,
+    "reason": null,
+    "original_url": "https://example.com/some/long/path"
+  }
+  ```
+- **Possible Error Responses**:
+  - **400 Bad Request**:
+    ```json
+    {
+      "reason": "Invalid URL format",
+      "details": "The provided URL is invalid.",
+      "success": false
+    }
+    ```
+    ```json
+    {
+      "detail": {
+        "reason": "URL is too long",
+        "details": "The provided URL is 24 characters long, but the maximum allowed length is 2048 characters.",
+        "success": false
+      }
+    }
+    ```
+
+  - **429 Too Many Requests**:
+    ```json
+    {
+      "detail": {
+        "reason": "Rate limit exceeded",
+        "details": "You have exceeded the limit of 10 requests per 60 seconds. Please wait before sending more requests.",
+        "success": false
+      }
+    }
+    ```
+
+### 2. Redirect URL
+- **Endpoint**: `/urls/v1/go/{short_url}`
+- **Method**: `GET`
+- **Description**: Redirects to the original URL based on the short URL.
+- **Sample Request**:
+  ```bash
+  GET /urls/v1/go/abc123
+  ```
+- **Sample Response (302 Found)**:
+  ```bash
+  Location: https://example.com/some/long/path
+  ```
+- **Possible Error Responses**:
+  - **404 Not Found**:
+    ```json
+    {
+      "reason": "Short URL not found",
+      "details": "The short URL pattern 'abc123' does not exist.",
+      "success": false
+    }
+    ```
+  - **410 Gone**:
+    ```json
+    {
+      "reason": "Short URL expired",
+      "details": "The short URL pattern 'abc123' has expired.",
+      "success": false
+    }
+    ```
+  - **429 Too Many Requests**:
+    ```json
+    {
+      "detail": {
+        "reason": "Rate limit exceeded",
+        "details": "You have exceeded the limit of 10 requests per 60 seconds. Please wait before sending more requests.",
+        "success": false
+      }
+    }
+    ```
