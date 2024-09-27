@@ -1,10 +1,13 @@
-from sqlalchemy import Column, String, Integer, DateTime
+import time
+
+from sqlalchemy import Column, String, Integer, DateTime, func
 from config import ONE_DAY_SECONDS, URL_VERSION
 from database import Base
 from datetime import datetime, timezone
 from starlette.status import HTTP_410_GONE
 from utils import raise_http_error, Redis_cache_handler
 from fastapi import Request
+from redis_client import redis_client
 
 
 # Define the database model for URL mappings
@@ -93,3 +96,70 @@ class URLMapping(Base):
 
         # Cache the original URL and set expiration in Redis
         redis_handler.set(self.original_url, ex=redis_expiration_time)
+
+    def get_new_id(self) -> int:
+        """
+        Checks if 'url_shortener_id' exists in Redis.
+        - If it exists, increments and returns the value.
+        - If it does not exist, retrieves the maximum ID from the database and uses a distributed lock to avoid race conditions.
+
+        Returns:
+            int: The incremented value of 'url_shortener_id'.
+        """
+        redis_handler = Redis_cache_handler("url_shortener_id", 'init')
+
+        # Check if 'url_shortener_id' already exists in Redis
+        current_id = redis_handler.get()
+        
+        if current_id:
+            # If the value exists in Redis, increment and return the new value
+            new_id = redis_handler.incr()
+            return new_id
+        
+        # If the value does not exist in Redis, use a Redis lock to avoid race conditions
+        lock_acquired = redis_handler.set(key="url_shortener_lock", value="1", nx=True, ex=5)  # Set a lock that expires after 5 seconds
+        
+        if lock_acquired:
+            try:
+                # After acquiring the lock, get the maximum ID from the database
+                max_id = self.get_max_id_from_db()
+
+                # Store the maximum ID from the database in Redis
+                redis_handler.set(max_id)
+                
+                # Increment and return the new value
+                new_id = redis_handler.incr()
+                return new_id
+            finally:
+                # Always release the lock
+                redis_handler.delete("url_shortener_lock")
+        else:
+            # If the lock is not available, wait for the lock to be released and then get the value
+            while not current_id:
+                time.sleep(0.1)  # Short wait
+                current_id = redis_handler.get()
+            
+            # Increment and return the new value
+            new_id = redis_handler.incr()
+            return new_id
+
+
+    def get_max_id_from_db(self) -> int:
+        """
+        Retrieves the maximum ID from the database.
+
+        Returns:
+            int: The maximum ID from the database.
+        """
+        # Assuming you have a session and URLMapping is the table
+        from sqlalchemy.orm import sessionmaker
+        from database import engine
+
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        max_id = session.query(func.max(URLMapping.id)).scalar() or 0
+        session.close()
+        return max_id
+
+# todo 此處redis有bug

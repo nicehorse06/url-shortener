@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main  # Trigger only on push to the main branch
+  pull_request:
+    branches:
+      - main  # Trigger only on PRs to the main branch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Check out the current code
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # Set up Python version (here using 3.10, adjust based on your needs)
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.10
+
+      # Install dependencies (assuming you have a requirements.txt)
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Run tests
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -s tests

@@ -1,33 +1,43 @@
 import functools
+import time
+
 from fastapi import Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from starlette.status import HTTP_400_BAD_REQUEST
 
-from redis_client import redis_client
+def get_redis_client():
+    from redis_client import redis_client
+    return redis_client
 
 
-BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-# Base62 encoding function
-def encode_base62(num: int) -> str:
+# Base62 encoding function with adjustable length
+def encode_base62(num: int, length: int = 6) -> str:
     """
-    Encodes a number to Base62.
+    Encodes a number to Base62 with a specified minimum length.
 
     Args:
         num (int): The number to encode.
+        length (int): The desired length of the Base62-encoded string. Defaults to 6.
 
     Returns:
-        str: The Base62-encoded string.
+        str: The Base62-encoded string, padded with '0' to the specified length if necessary.
     """
+    BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     if num == 0:
-        return BASE62_ALPHABET[0]
+        return BASE62_ALPHABET[0].rjust(length, '0')
+    
     base62 = []
     while num:
         num, rem = divmod(num, 62)
         base62.append(BASE62_ALPHABET[rem])
-    return ''.join(reversed(base62))
+    
+    encoded_str = ''.join(reversed(base62))
+    
+    # Pad the result with '0' to ensure the length is as specified
+    return encoded_str.rjust(length, '0')
+
 
 # Rate-limiting decorator
 def rate_limit(limit: int = 10, window: int = 60):
@@ -46,6 +56,8 @@ def rate_limit(limit: int = 10, window: int = 60):
         async def wrapper(request: Request, *args, **kwargs):
             ip = request.client.host
             key = f"rate_limit:{ip}"
+
+            redis_client = get_redis_client()
 
             # Increment request count
             current = redis_client.incr(key)
@@ -142,6 +154,8 @@ class Redis_cache_handler:
         """
         self.url_cache_key = url_cache_key
         self.key_prefix = key_prefix
+        self.url_shortener_id = "url_shortener_id"
+        self.redis_client = get_redis_client()
 
     @property
     def redis_key(self) -> str:
@@ -160,7 +174,7 @@ class Redis_cache_handler:
         Returns:
             dict: The data stored in the Redis hash.
         """
-        return redis_client.hgetall(self.redis_key)
+        return self.redis_client.hgetall(self.redis_key)
 
     def hset(self, mapping: dict = None) -> None:
         """
@@ -170,7 +184,7 @@ class Redis_cache_handler:
             mapping (dict): The dictionary to store in the Redis hash.
         """
         if mapping:
-            redis_client.hset(self.redis_key, mapping=mapping)
+            self.redis_client.hset(self.redis_key, mapping=mapping)
 
     def get(self) -> str:
         """
@@ -179,7 +193,7 @@ class Redis_cache_handler:
         Returns:
             str: The value associated with the Redis key.
         """
-        return redis_client.get(self.redis_key)
+        return self.redis_client.get(self.redis_key)
 
     def expire(self, ex: int) -> None:
         """
@@ -188,7 +202,7 @@ class Redis_cache_handler:
         Args:
             ex (int): The expiration time in seconds.
         """
-        redis_client.expire(self.redis_key, ex)
+        self.redis_client.expire(self.redis_key, ex)
 
     def get_expiration_time(self) -> int:
         """
@@ -197,9 +211,9 @@ class Redis_cache_handler:
         Returns:
             int: The TTL for the key in seconds.
         """
-        return redis_client.ttl(self.redis_key)
+        return self.redis_client.ttl(self.redis_key)
 
-    def set(self, value: str, ex: int = '') -> None:
+    def set(self, value: str, ex: int = None, nx=None, key=None) -> None:
         """
         Sets a value in Redis with an optional expiration time.
 
@@ -207,4 +221,95 @@ class Redis_cache_handler:
             value (str): The value to store.
             ex (int, optional): The expiration time in seconds.
         """
-        redis_client.set(self.redis_key, value, ex=ex)
+        key = key or self.redis_key
+        self.redis_client.set(self.redis_key, value, ex=ex, nx=nx)
+
+    def delete(self, key=None) -> None:
+        """Deletes a key from Redis."""
+        key = key or self.redis_key
+        self.redis_client.delete(key)
+
+    def incr(self) -> int:
+        """Increments the value of a Redis key."""
+        return self.redis_client.incr(self.redis_key)
+    
+
+class Table_id_handler:
+    """
+    A class to handle the generation of unique IDs for the URL shortener.
+    """
+    def __init__(self, this_talbe) -> None:
+        self.this_table = this_talbe
+
+    def get_new_id(self) -> int:
+        """
+        Checks if 'url_shortener_id' exists in Redis.
+        - If it exists, increments and returns the value.
+        - If it does not exist, retrieves the maximum ID from the database and uses a distributed lock to avoid race conditions.
+
+        Returns:
+            int: The incremented value of 'url_shortener_id'.
+        """
+        redis_handler = Redis_cache_handler("url_shortener_id", 'init')
+
+        # TODO: Refactor redis_client or redis_handler to not only inherit from redis_client 
+        # but also support additional syntactic sugar for easier usage and customization.
+        redis_client = get_redis_client()
+
+        # Check if 'url_shortener_id' already exists in Redis
+        current_id = redis_handler.get()
+        
+        if current_id:
+            # If the value exists in Redis, increment and return the new value
+            new_id = redis_handler.incr()
+            return new_id
+        
+        
+        # If the value does not exist in Redis, use a Redis lock to avoid race conditions
+        lock_acquired = redis_client.set("url_shortener_lock", value="1", nx=True, ex=5)  # Set a lock that expires after 5 seconds
+        
+        if lock_acquired:
+            try:
+                # After acquiring the lock, get the maximum ID from the database
+                max_id = self.get_max_id_from_db()
+
+                # Store the maximum ID from the database in Redis
+                redis_handler.set(max_id, nx=True)
+                
+                # Increment and return the new value
+                new_id = redis_handler.incr()
+                return new_id
+            finally:
+                # Always release the lock
+                redis_client.delete("url_shortener_lock")
+        else:
+            
+            # If the lock is not available, wait for the lock to be released and then get the value
+            while not current_id:
+                time.sleep(0.1)  # Short wait
+                print('waiting for current_id')
+                current_id = redis_handler.get()
+            
+            # Increment and return the new value
+            new_id = redis_handler.incr()
+            return new_id
+
+
+    def get_max_id_from_db(self) -> int:
+        """
+        Retrieves the maximum ID from the database.
+
+        Returns:
+            int: The maximum ID from the database.
+        """
+        # Assuming you have a session and URLMapping is the table
+        from sqlalchemy.orm import sessionmaker
+        from database import engine
+        from sqlalchemy import func
+
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        max_id = session.query(func.max(self.this_table.id)).scalar() or 0
+        session.close()
+        return max_id

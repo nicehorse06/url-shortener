@@ -7,9 +7,11 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_500_INTERNAL_SERVER_ERROR
 )
+
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 from api_schemas import URLRequest, URLResponse
-from utils import encode_base62, rate_limit, raise_http_error, Redis_cache_handler
+from utils import encode_base62, rate_limit, raise_http_error, Redis_cache_handler, Table_id_handler
 from database import get_db
 from models import URLMapping
 from config import URL_VERSION, MAX_URL_LENGTH, URL_EXPIRATION_DATE
@@ -51,32 +53,41 @@ async def create_short_url(
     return_data = redis_handler.hgetall()
 
     if not return_data.get("short_url"):
-        # Query the database for an existing URL that hasn't expired
-        url_mapping = db.query(URLMapping).filter(
+
+        # Use an exists query to check if the URL already exists
+        url_exists = db.query(exists().where(
             URLMapping.original_url == original_url_str,
             URLMapping.expiration_date > datetime.now(timezone.utc)
-        ).first()
+        )).scalar()
 
-        if not url_mapping:
-            # Create a new short URL if none exists
+        if not url_exists:
+            # If no existing short URL is found, create a new one
             try:
-                short_url = encode_base62(db.query(URLMapping).count() + 1)
-
-                # Create a new URL mapping in the database
+                # Insert a new record with the original URL and get the auto-incremented ID
                 url_mapping = URLMapping(
                     original_url=original_url_str,
-                    short_url=short_url,
                     expiration_date=datetime.now(timezone.utc) + timedelta(days=URL_EXPIRATION_DATE)
                 )
+                this_table_id_handler = Table_id_handler(URLMapping)
+
+                # Generate a Base62 encoded short URL using the unique database ID
+                short_url = encode_base62(this_table_id_handler.get_new_id())
+            
+                # Update the short_url field in the database with the generated short URL
+                url_mapping.short_url = short_url
+                
                 db.add(url_mapping)
                 db.commit()
 
             except Exception:
+                # If an error occurs, rollback the transaction and raise an HTTP error
                 db.rollback()
+                import traceback
+                traceback.print_exc()  # This will print the full stack trace
                 raise_http_error(
                     status_code=HTTP_500_INTERNAL_SERVER_ERROR,
                     reason="Short URL creation error.",
-                    details="An error occurred while creating the short URL.",
+                    details="An error occurred while creating the short URL."
                 )
                 
         # Cache the newly created URL mapping in Redis
