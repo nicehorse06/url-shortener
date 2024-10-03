@@ -63,15 +63,20 @@ async def create_short_url(
         if not url_exists:
             # If no existing short URL is found, create a new one
             try:
+                
+                # Get a new unique ID for the URL mapping
+                this_table_id_handler = Table_id_handler(URLMapping)
+                url_mapping_id = this_table_id_handler.get_new_id()
+
                 # Insert a new record with the original URL and get the auto-incremented ID
                 url_mapping = URLMapping(
+                    id=url_mapping_id,
                     original_url=original_url_str,
                     expiration_date=datetime.now(timezone.utc) + timedelta(days=URL_EXPIRATION_DATE)
                 )
-                this_table_id_handler = Table_id_handler(URLMapping)
 
                 # Generate a Base62 encoded short URL using the unique database ID
-                short_url = encode_base62(this_table_id_handler.get_new_id())
+                short_url = encode_base62(url_mapping_id)
             
                 # Update the short_url field in the database with the generated short URL
                 url_mapping.short_url = short_url
